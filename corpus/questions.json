@@ -1,0 +1,68 @@
+[
+  {
+    "id": "T1",
+    "type": "text",
+    "question": "In what year and city was Kestrel Systems founded?",
+    "label": "Founded in 2021 in San Diego."
+  },
+  {
+    "id": "T2",
+    "type": "text",
+    "question": "On which port does a VoltEdge appliance expose its management API?",
+    "label": "Port 8443 (HTTPS with mutual TLS)."
+  },
+  {
+    "id": "T3",
+    "type": "text",
+    "question": "How many concurrent camera streams does the VoltEdge Pro support?",
+    "label": "16 concurrent streams."
+  },
+  {
+    "id": "T4",
+    "type": "text",
+    "question": "What was the fleet uptime in Q3 2025, and which two new regions were added?",
+    "label": "99.92% uptime; new regions were Frankfurt and Osaka."
+  },
+  {
+    "id": "T5",
+    "type": "text",
+    "question": "Which inference server do VoltEdge appliances use to serve models?",
+    "label": "NVIDIA Triton Inference Server."
+  },
+  {
+    "id": "F1",
+    "type": "figure",
+    "question": "What is the p95 inference latency of the VoltEdge Max on ResNet-50 INT8?",
+    "label": "9 ms."
+  },
+  {
+    "id": "F2",
+    "type": "figure",
+    "question": "Which product line contributed the largest share of Q3 2025 revenue, and what percentage was it?",
+    "label": "VoltEdge Pro, with 52% of revenue."
+  },
+  {
+    "id": "F3",
+    "type": "figure",
+    "question": "What was the peak fleet GPU utilization in the 24-hour sample, and at what hour did it occur?",
+    "label": "Peak of 91% at 14:00 UTC."
+  },
+  {
+    "id": "F4",
+    "type": "figure",
+    "question": "In the VoltEdge streaming pipeline, which component sits between the post-process stage and the operations dashboard?",
+    "label": "The MQTT broker."
+  },
+  {
+    "id": "F5",
+    "type": "figure",
+    "question": "What is the VoltEdge Pro's stream error rate on firmware 2.4, and how does it compare to firmware 2.3?",
+    "label": "0.6% on firmware 2.4, down from 1.8% on firmware 2.3."
+  },
+  {
+    "id": "U1",
+    "type": "unanswerable",
+    "question": "What is the retail price of the VoltEdge Nano?",
+    "label": "Not stated anywhere in the corpus; the agent should abstain rather than guess."
+  }
+]

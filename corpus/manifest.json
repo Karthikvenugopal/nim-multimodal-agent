@@ -1,0 +1,24 @@
+{
+  "images": [
+    {
+      "file": "images/fig_latency_benchmark.png",
+      "caption": "Bar chart of p95 inference latency benchmarks (ResNet-50 INT8, batch 1) for the VoltEdge Nano, VoltEdge Pro, and VoltEdge Max appliances. The per-variant latency values in milliseconds are shown in the figure."
+    },
+    {
+      "file": "images/fig_revenue_mix.png",
+      "caption": "Pie chart of the Kestrel Systems Q3 2025 revenue mix, showing the percentage share contributed by VoltEdge Pro, VoltEdge Max, VoltEdge Nano, and Services."
+    },
+    {
+      "file": "images/fig_gpu_utilization.png",
+      "caption": "Line chart of VoltEdge fleet GPU utilization over a 24-hour sample, annotated with the daily peak and trough utilization percentages and the hours at which they occur."
+    },
+    {
+      "file": "images/fig_architecture.png",
+      "caption": "Block diagram of the VoltEdge streaming inference pipeline showing the ordered stages and message flow from the camera array through to the operations dashboard."
+    },
+    {
+      "file": "images/fig_error_rates.png",
+      "caption": "Grouped bar chart comparing stream error rate percentages on firmware 2.3 versus firmware 2.4 for each VoltEdge variant (Nano, Pro, Max)."
+    }
+  ]
+}

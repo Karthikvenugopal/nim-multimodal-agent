@@ -1,0 +1,6 @@
+openai>=1.50.0
+langgraph>=0.2.50
+numpy>=1.26.0
+python-dotenv>=1.0.0
+# Only needed to regenerate the sample corpus images (scripts/make_images.py)
+matplotlib>=3.8.0
