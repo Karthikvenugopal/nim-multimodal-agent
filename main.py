@@ -4,6 +4,8 @@ Usage::
 
     python main.py "What is the p95 latency of the VoltEdge Max?"
     python main.py --benchmark
+    python main.py --benchmark --no-vision   # text-only baseline
+    python main.py --ablation                # vision ON vs OFF comparison
 """
 
 from __future__ import annotations
@@ -23,9 +25,18 @@ def main() -> int:
         "--benchmark", action="store_true",
         help="run the full labeled benchmark from corpus/questions.json",
     )
+    parser.add_argument(
+        "--ablation", action="store_true",
+        help="run the benchmark with and without the vision path and "
+             "report the multimodal accuracy lift",
+    )
+    parser.add_argument(
+        "--no-vision", action="store_true",
+        help="disable the vision path (text-only baseline)",
+    )
     args = parser.parse_args()
-    if not args.question and not args.benchmark:
-        parser.error("provide a question or --benchmark")
+    if not args.question and not args.benchmark and not args.ablation:
+        parser.error("provide a question, --benchmark, or --ablation")
 
     load_dotenv()
 
@@ -39,10 +50,20 @@ def main() -> int:
     print("ingesting corpus...")
     chunks = load_corpus()
     retriever = Retriever(client, chunks)
-    agent = build_agent(client, retriever)
     print(f"ingested {len(chunks)} chunks "
           f"({sum(c.kind == 'text' for c in chunks)} text, "
           f"{sum(c.kind == 'image' for c in chunks)} image)\n")
+
+    if args.ablation:
+        from evaluate import run_ablation
+        run_ablation(
+            client,
+            build_agent(client, retriever, enable_vision=True),
+            build_agent(client, retriever, enable_vision=False),
+        )
+        return 0
+
+    agent = build_agent(client, retriever, enable_vision=not args.no_vision)
 
     if args.benchmark:
         from evaluate import run_benchmark

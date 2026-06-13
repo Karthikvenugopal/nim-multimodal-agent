@@ -64,5 +64,23 @@
     "type": "unanswerable",
     "question": "What is the retail price of the VoltEdge Nano?",
     "label": "Not stated anywhere in the corpus; the agent should abstain rather than guess."
+  },
+  {
+    "id": "CM1",
+    "type": "cross_modal",
+    "question": "Which VoltEdge variant has the lowest p95 inference latency, and how many concurrent camera streams does it support?",
+    "label": "The VoltEdge Max: it has the lowest p95 latency (9 ms) per the latency figure, and supports 64 concurrent camera streams per the deployment guide."
+  },
+  {
+    "id": "CM2",
+    "type": "cross_modal",
+    "question": "What compute module powers the product line that contributed the largest share of Q3 2025 revenue?",
+    "label": "The VoltEdge Pro had the largest Q3 2025 revenue share (52%) per the revenue figure, and it is powered by dual NVIDIA Jetson Orin NX modules per the product overview."
+  },
+  {
+    "id": "CM3",
+    "type": "cross_modal",
+    "question": "Which variant has the highest stream error rate on firmware 2.4, and what compute module does it use?",
+    "label": "The VoltEdge Nano has the highest firmware 2.4 stream error rate (0.9%) per the error-rate figure, and it is powered by a single NVIDIA Jetson Orin Nano module per the product overview."
   }
 ]

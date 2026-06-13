@@ -2,8 +2,8 @@
 
 Flow::
 
-    retrieve ──(any image chunks?)──> analyze_images ──> generate
-        └──────────(text only)─────────────────────────────^
+    retrieve ──(relevant image queued?)──> analyze_images ──> generate
+        └──────────(text only)──────────────────────────────────^
 
 * ``retrieve`` embeds the query and pulls the top-k corpus chunks
   (text passages and image captions) by cosine similarity. An image chunk is
@@ -16,6 +16,12 @@ Flow::
 * ``generate`` produces a grounded answer with the Nemotron text model from
   the text passages plus the vision findings, abstaining when the context
   is insufficient.
+
+Building the graph with ``enable_vision=False`` removes the vision route
+entirely (every query goes straight to ``generate`` with no image findings).
+That "blind" variant powers the ablation in ``evaluate.run_ablation``, which
+quantifies how much the multimodal path contributes to figure and
+cross-modal questions.
 """
 
 from __future__ import annotations
@@ -113,8 +119,13 @@ class Retriever:
         return [(self._chunks[i], float(scores[i])) for i in top]
 
 
-def build_agent(client: NIMClient, retriever: Retriever):
-    """Compile and return the LangGraph agent."""
+def build_agent(client: NIMClient, retriever: Retriever, *, enable_vision: bool = True):
+    """Compile and return the LangGraph agent.
+
+    When ``enable_vision`` is ``False`` the ``analyze_images`` route is never
+    taken, so figures contribute nothing to the context — the "blind" baseline
+    used by the ablation.
+    """
 
     def retrieve(state: AgentState) -> AgentState:
         """Retrieve top-k chunks and queue images that pass the relevance gate."""
@@ -127,7 +138,9 @@ def build_agent(client: NIMClient, retriever: Retriever):
         return {"chunks": [c for c, _ in hits], "image_queue": image_queue}
 
     def route_after_retrieve(state: AgentState) -> str:
-        return "analyze_images" if state.get("image_queue") else "generate"
+        if enable_vision and state.get("image_queue"):
+            return "analyze_images"
+        return "generate"
 
     def analyze_images(state: AgentState) -> AgentState:
         """Send each queued image to the NIM vision model."""
