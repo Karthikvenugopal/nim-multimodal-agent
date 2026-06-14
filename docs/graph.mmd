@@ -8,12 +8,20 @@ graph TD;
 	retrieve(retrieve)
 	analyze_images(analyze_images)
 	generate(generate)
+	judge_gate(judge_gate)
+	correct(correct)
+	abstain(abstain)
 	__end__([<p>__end__</p>]):::last
 	__start__ --> retrieve;
 	analyze_images --> generate;
+	correct --> generate;
+	generate --> judge_gate;
+	judge_gate -. &nbsp;accept&nbsp; .-> __end__;
+	judge_gate -.-> abstain;
+	judge_gate -.-> correct;
 	retrieve -.-> analyze_images;
 	retrieve -.-> generate;
-	generate --> __end__;
+	abstain --> __end__;
 	classDef default fill:#f2f0ff,line-height:1.2
 	classDef first fill-opacity:0
 	classDef last fill:#bfb6fc

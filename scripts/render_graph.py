@@ -37,7 +37,8 @@ class _Stub:
 
 def main() -> None:
     DOCS.mkdir(exist_ok=True)
-    graph = build_agent(_Stub(), _Stub()).get_graph()
+    # Render the full graph including the self-correction loop.
+    graph = build_agent(_Stub(), _Stub(), enable_correction=True).get_graph()
 
     mermaid = graph.draw_mermaid()
     (DOCS / "graph.mmd").write_text(mermaid)

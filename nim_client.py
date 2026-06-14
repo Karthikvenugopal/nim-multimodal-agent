@@ -61,6 +61,12 @@ def _with_retries(call: Callable[[], _T], *, attempts: int = 4, base_delay: floa
     raise last_exc
 
 
+def _clean_rewrite(raw: str, fallback: str) -> str:
+    """Take the first non-empty line of a query rewrite, or the original."""
+    line = raw.strip().splitlines()[0].strip() if raw.strip() else ""
+    return line or fallback
+
+
 def _strip_reasoning(text: str) -> str:
     """Remove ``<think>...</think>`` blocks emitted by Nemotron reasoning models.
 
@@ -83,9 +89,14 @@ class NIMClient:
                 "NVIDIA_API_KEY is missing or malformed (expected an "
                 "'nvapi-...' key). Set it in your environment or .env file."
             )
+        # Bound each request so a stalled NIM connection fails fast and our
+        # own backoff retries it, instead of blocking on the SDK's ~10-minute
+        # default. max_retries=0 keeps _with_retries the single retry path.
         self._client = OpenAI(
             base_url=os.environ.get("NIM_BASE_URL", DEFAULT_BASE_URL),
             api_key=api_key,
+            timeout=float(os.environ.get("NIM_TIMEOUT", "90")),
+            max_retries=0,
         )
         self.vision_model = os.environ.get("NIM_VISION_MODEL", DEFAULT_VISION_MODEL)
         self.text_model = os.environ.get("NIM_TEXT_MODEL", DEFAULT_TEXT_MODEL)
@@ -120,6 +131,21 @@ class NIMClient:
         )
         content = resp.choices[0].message.content or ""
         return _strip_reasoning(content)
+
+    def rewrite_query(self, question: str, *, temperature: float = 0.3) -> str:
+        """Reformulate a question to improve retrieval recall (query expansion).
+
+        Used by the self-correction loop when an answer fails the faithfulness
+        gate and the likely cause is weak retrieval. Falls back to the original
+        question if the model returns nothing usable.
+        """
+        system = (
+            "Rewrite the user's question to maximize document retrieval recall. "
+            "Expand abbreviations, add likely synonyms and keywords, and keep it "
+            "a single line. Output ONLY the rewritten query — do not answer it."
+        )
+        rewritten = self.chat(system, question, temperature=temperature, max_tokens=128)
+        return _clean_rewrite(rewritten, question)
 
     # ---------------------------------------------------------------- vision
 

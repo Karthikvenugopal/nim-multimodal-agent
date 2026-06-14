@@ -8,17 +8,22 @@ Two metrics per question:
 * **faithfulness** (0.0–1.0) — is every claim in the answer supported by the
   retrieved context (text passages + vision findings)? An abstention is
   trivially faithful (1.0).
+
+:func:`run_ablation` additionally measures the multimodal lift (vision on vs.
+off), and :func:`run_correction_benchmark` measures the in-graph
+self-correction loop (trigger rate, recovery rate, faithfulness before/after).
+The judge primitives live in :mod:`judge` so the in-graph gate can reuse them.
 """
 
 from __future__ import annotations
 
 import json
-import re
 import time
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any
 
-from agent import AgentState, answer_question
+from agent import AgentState, FAITHFULNESS_THRESHOLD, answer_question
+from judge import JUDGE_SYSTEM, JudgeResult, parse_judge_json
 from nim_client import NIMClient
 
 QUESTIONS_PATH = Path(__file__).resolve().parent / "corpus" / "questions.json"
@@ -26,56 +31,6 @@ QUESTIONS_PATH = Path(__file__).resolve().parent / "corpus" / "questions.json"
 # Question types that can only be answered by reading a figure, so the vision
 # path is expected to fire and is what the ablation removes.
 VISION_DEPENDENT_TYPES = {"figure", "cross_modal"}
-
-JUDGE_SYSTEM = (
-    "You are a strict evaluation judge for a retrieval-augmented QA system. "
-    "Respond with ONLY a JSON object, no prose, no markdown fences, with "
-    "exactly these keys:\n"
-    '  "correct": 1 or 0,\n'
-    '  "faithfulness": a float from 0.0 to 1.0,\n'
-    '  "reason": one short sentence.\n'
-    "correct=1 iff the ANSWER conveys the same facts as the GOLD LABEL "
-    "(wording may differ). If the gold label says the question is "
-    "unanswerable, correct=1 iff the answer abstains. faithfulness is the "
-    "fraction of the answer's claims directly supported by the CONTEXT; an "
-    "abstention scores 1.0."
-)
-
-
-class JudgeResult(TypedDict):
-    correct: int
-    faithfulness: float
-    reason: str
-
-
-def parse_judge_json(raw: str) -> JudgeResult:
-    """Defensively parse the judge's response into a JudgeResult.
-
-    Tries plain JSON, then strips markdown fences, then falls back to the
-    first ``{...}`` block in the text. Raises ValueError if nothing parses.
-    """
-    candidates = [raw.strip()]
-    fenced = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.MULTILINE)
-    candidates.append(fenced.strip())
-    brace = re.search(r"\{.*\}", raw, re.DOTALL)
-    if brace:
-        candidates.append(brace.group(0))
-    for cand in candidates:
-        try:
-            obj: dict[str, Any] = json.loads(cand)
-        except (json.JSONDecodeError, TypeError):
-            continue
-        if not isinstance(obj, dict):
-            continue
-        try:
-            correct = 1 if int(obj["correct"]) == 1 else 0
-            faith = min(1.0, max(0.0, float(obj["faithfulness"])))
-        except (KeyError, TypeError, ValueError):
-            continue
-        return JudgeResult(
-            correct=correct, faithfulness=faith, reason=str(obj.get("reason", ""))
-        )
-    raise ValueError(f"judge returned unparseable output: {raw[:200]!r}")
 
 
 def judge_answer(
@@ -211,4 +166,86 @@ def run_ablation(client: NIMClient, agent_full, agent_blind) -> dict[str, Any]:
         "blind_by_type": blind_by_type,
         "overall_on": on_all,
         "overall_off": off_all,
+    }
+
+
+def _mean(values: list[float]) -> float:
+    return sum(values) / len(values) if values else 0.0
+
+
+def run_correction_benchmark(client: NIMClient, agent) -> dict[str, Any]:
+    """Run the correction-enabled agent over the set and measure the loop.
+
+    Reports, across the benchmark: correction trigger rate, recovery rate
+    (low-faith answers that cleared the gate after correction), and mean
+    faithfulness before vs. after correction. The agent must have been built
+    with ``enable_correction=True``.
+    """
+    questions = json.loads(QUESTIONS_PATH.read_text())
+    rows: list[dict[str, Any]] = []
+    for q in questions:
+        start = time.time()
+        state = answer_question(agent, q["question"])
+        verdict = judge_answer(client, q["question"], q["label"], state["answer"], state)
+        history = state.get("faith_history") or [state.get("faithfulness", 0.0)]
+        attempts = state.get("attempts", 0)
+        abstained = state.get("abstained", False)
+        triggered = attempts > 0
+        faith_after = history[-1]
+        recovered = triggered and not abstained and faith_after >= FAITHFULNESS_THRESHOLD
+        result = "abstain" if abstained else ("recover" if triggered else "accept")
+        rows.append({
+            "id": q["id"], "type": q["type"], "attempts": attempts,
+            "actions": state.get("actions", []), "faith_before": history[0],
+            "faith_after": faith_after, "triggered": triggered,
+            "recovered": recovered, "abstained": abstained, "result": result,
+            "correct": verdict["correct"], "seconds": time.time() - start,
+        })
+        print(f"  [{q['id']}] attempts={attempts} "
+              f"[{','.join(state.get('actions', [])) or '-'}]  "
+              f"faith {history[0]:.2f}->{faith_after:.2f}  {result:<7} "
+              f"correct={verdict['correct']}  ({rows[-1]['seconds']:.1f}s)")
+
+    header = (f"{'id':<5} {'type':<13} {'att':>3} {'actions':<22} "
+              f"{'pre':>5} {'post':>5} {'result':<8} {'correct':>7}")
+    sep = "-" * len(header)
+    print(f"\n{header}\n{sep}")
+    for r in rows:
+        print(f"{r['id']:<5} {r['type']:<13} {r['attempts']:>3} "
+              f"{(','.join(r['actions']) or '-'):<22} {r['faith_before']:>5.2f} "
+              f"{r['faith_after']:>5.2f} {r['result']:<8} {r['correct']:>7}")
+    print(sep)
+
+    n = len(rows)
+    triggered = [r for r in rows if r["triggered"]]
+    recovered = [r for r in triggered if r["recovered"]]
+    action_counts: dict[str, int] = {}
+    for r in rows:
+        for a in r["actions"]:
+            action_counts[a] = action_counts.get(a, 0) + 1
+
+    recovery_rate = len(recovered) / len(triggered) if triggered else 0.0
+    recovery_line = (f"{len(recovered)}/{len(triggered)} = {recovery_rate:.1%}"
+                     if triggered else "n/a (nothing triggered)")
+    print(f"\nthreshold:                   {FAITHFULNESS_THRESHOLD:.2f}")
+    print(f"questions:                   {n}")
+    print(f"correction trigger rate:     {len(triggered)}/{n} = {len(triggered) / n:.1%}")
+    print(f"recovery rate:               {recovery_line}")
+    print(f"mean faithfulness pre-corr:  {_mean([r['faith_before'] for r in triggered]):.2f}  (triggered only)")
+    print(f"mean faithfulness post-corr: {_mean([r['faith_after'] for r in triggered]):.2f}  (triggered only)")
+    print(f"abstention rate:             {sum(r['abstained'] for r in rows)}/{n} = "
+          f"{_mean([float(r['abstained']) for r in rows]):.1%}")
+    print(f"final answer accuracy:       {sum(r['correct'] for r in rows)}/{n} = "
+          f"{_mean([float(r['correct']) for r in rows]):.1%}")
+    print(f"actions fired:               "
+          f"{'  '.join(f'{k}={v}' for k, v in sorted(action_counts.items())) or '(none)'}")
+    return {
+        "rows": rows,
+        "trigger_rate": len(triggered) / n,
+        "recovery_rate": recovery_rate,
+        "mean_faith_before": _mean([r["faith_before"] for r in triggered]),
+        "mean_faith_after": _mean([r["faith_after"] for r in triggered]),
+        "abstention_rate": _mean([float(r["abstained"]) for r in rows]),
+        "accuracy": _mean([float(r["correct"]) for r in rows]),
+        "action_counts": action_counts,
     }

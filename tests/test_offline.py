@@ -13,9 +13,17 @@ import openai
 import pytest
 
 import nim_client
-from agent import Chunk, build_agent, load_corpus
+from agent import (
+    Chunk,
+    _choose_correction,
+    _gate_decision,
+    _looks_multipart,
+    build_agent,
+    load_corpus,
+)
 from evaluate import _by_type, parse_judge_json
-from nim_client import NIMClient, _strip_reasoning, _with_retries
+from judge import parse_faithfulness
+from nim_client import NIMClient, _clean_rewrite, _strip_reasoning, _with_retries
 
 
 # --------------------------------------------------------------------- stubs
@@ -32,6 +40,9 @@ class StubClient:
 
     def chat(self, system: str, user: str, **kw) -> str:
         return "stub answer"
+
+    def rewrite_query(self, question: str, **kw) -> str:
+        return f"{question} (rewritten)"
 
 
 class StubRetriever:
@@ -173,3 +184,90 @@ def test_missing_key_raises(monkeypatch) -> None:
     monkeypatch.delenv("NVIDIA_API_KEY", raising=False)
     with pytest.raises(RuntimeError):
         NIMClient()
+
+
+# -------------------------------------------------- self-correction policy
+
+@pytest.mark.parametrize(
+    "grounding, attempts, expected",
+    [
+        (0.9, 0, "accept"),   # grounded -> done
+        (0.3, 0, "correct"),  # low faith, tries remain -> correct
+        (0.3, 2, "abstain"),  # low faith, out of tries -> abstain honestly
+        (0.7, 1, "accept"),   # exactly at threshold -> accept
+    ],
+)
+def test_gate_decision(grounding: float, attempts: int, expected: str) -> None:
+    assert _gate_decision(
+        grounding, attempts, threshold=0.7, max_corrections=2
+    ) == expected
+
+
+def test_choose_correction_forces_vision_when_figure_unread() -> None:
+    chunks = [_text(), _image()]
+    assert _choose_correction(
+        chunks, used_vision=False, question="What does the chart show?",
+        enable_vision=True,
+    ) == "force_vision"
+
+
+def test_choose_correction_decomposes_multipart_after_vision() -> None:
+    chunks = [_text(), _image()]
+    # vision already fired -> a multi-part question should decompose
+    action = _choose_correction(
+        chunks, used_vision=True,
+        question="Which variant is fastest, and how many streams does it support?",
+        enable_vision=True,
+    )
+    assert action == "decompose"
+
+
+def test_choose_correction_defaults_to_rewrite() -> None:
+    chunks = [_text(0), _text(1)]  # no image, single-part question
+    assert _choose_correction(
+        chunks, used_vision=False, question="What port is used?", enable_vision=True,
+    ) == "rewrite_query"
+
+
+def test_looks_multipart() -> None:
+    assert _looks_multipart("Which variant is fastest, and how many streams?") is True
+    assert _looks_multipart("What port is the management API on?") is False
+
+
+def test_correction_loop_recovers_then_abstains(monkeypatch) -> None:
+    """End-to-end loop on stubs: a low-faith answer triggers a corrective
+    action; once attempts are exhausted the agent abstains."""
+    from agent import ABSTAIN_ANSWER
+
+    # Faithfulness judge always returns low grounding -> never clears the gate.
+    monkeypatch.setattr(
+        "agent.judge_faithfulness",
+        lambda client, q, a, ctx: {"answered": 1, "faithfulness": 0.1,
+                                    "grounding": 0.1, "reason": "stub"},
+    )
+    client = StubClient()
+    agent = build_agent(
+        client, StubRetriever([(_image(), 0.6), (_text(), 0.4)]),
+        enable_correction=True,
+    )
+    state = agent.invoke({"question": "What does the chart show?"},
+                         {"recursion_limit": 50})
+    assert state["attempts"] == 2  # MAX_CORRECTIONS default
+    assert state["abstained"] is True
+    assert state["answer"] == ABSTAIN_ANSWER
+    assert state["actions"][0] == "force_vision"  # figure present, vision unread
+
+
+def test_parse_faithfulness_defensive() -> None:
+    grounded = parse_faithfulness('{"answered": 1, "faithfulness": 0.9, "reason": "ok"}')
+    assert grounded["grounding"] == pytest.approx(0.9)
+    # an abstention grounds nothing even though faithfulness is high
+    abstained = parse_faithfulness('{"answered": 0, "faithfulness": 1.0, "reason": "abstain"}')
+    assert abstained["grounding"] == 0.0
+    # unparseable -> treated as ungrounded so the gate errs toward correcting
+    assert parse_faithfulness("garbage")["grounding"] == 0.0
+
+
+def test_clean_rewrite_falls_back() -> None:
+    assert _clean_rewrite("", "original q") == "original q"
+    assert _clean_rewrite("  rewritten query \nextra", "orig") == "rewritten query"
